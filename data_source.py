@@ -2,6 +2,7 @@ import os
 import os.path
 import json
 from typing import Dict
+from enum import Enum
 
 def get_norm_path(path):
     # Expand any environment variables
@@ -11,6 +12,11 @@ def get_norm_path(path):
     # Remove any special chars like .. or double-slash
     path = os.path.normpath(path)
     return path
+
+class LEDState(Enum):
+    OFF = 0
+    LOCATE = 1
+    FAULT = 2
 
 class Slot:
     ACTIVE_FILE = "active"
@@ -64,10 +70,59 @@ class Slot:
 
         return None
 
-    # TODO: implement these (if possible?)
-    def get_led_state(self):
-        return "OFF"
+    def _get_state(self, file):
+        with open(file, 'r') as f:
+            state = f.read()
+            int_state = int(state)
+            if int_state == 0:
+                return False
+            else:
+                return True
 
+    def _set_state(self, file, state):
+        with open(file, 'w') as f:
+            f.write(state)
+
+    def set_led_state(self, state : LEDState):
+        locate_file = os.path.join(self.slot_path, self.LOCATE_FILE)
+        fault_file = os.path.join(self.slot_path, self.FAULT_FILE)
+
+        locate_state = self._get_state(locate_file)
+        fault_state = self._get_state(fault_file)
+
+        if state == LEDState.OFF:
+            if locate_state == True:
+                self._set_state(locate_file, "0")
+            if fault_state == True:
+                self._set_state(fault_file, "0")
+        elif state == LEDState.LOCATE:
+            if locate_state == False:
+                self._set_state(locate_file, "1")
+            if fault_state == True:
+                self._set_state(fault_file, "0")
+        elif state == LEDState.FAULT:
+            if locate_state == True:
+                self._set_state(locate_file, "0")
+            if fault_state == False:
+                self._set_state(fault_file, "1")
+
+    def get_led_state(self):
+        locate_file = os.path.join(self.slot_path, self.LOCATE_FILE)
+        fault_file = os.path.join(self.slot_path, self.FAULT_FILE)
+
+        locate_state = self._get_state(locate_file)
+        fault_state = self._get_state(fault_file)
+
+        if locate_state == True and fault_state == True:
+            return "LOCATE & FAULT"
+        elif locate_state == True:
+            return "LOCATE"
+        elif fault_state == True:
+            return "FAULT"
+        else:
+            return "OFF"
+    
+    # TODO: implement these (if possible?)
     def get_drive_serial_number(self):
         return "01234567"
 
@@ -306,6 +361,6 @@ class SlotMapDataSource:
 
             self.enclosure_data[enc].from_dict(enclosure_config)
 
-    def debug(self):
+    def debug(self, prefix = ""):
         for enc in self.enclosure_data:
-            self.enclosure_data[enc].debug()
+            self.enclosure_data[enc].debug(prefix)
