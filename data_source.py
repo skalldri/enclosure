@@ -1,6 +1,7 @@
 import os
 import os.path
 import json
+from typing import Dict
 
 def get_norm_path(path):
     # Expand any environment variables
@@ -63,20 +64,78 @@ class Slot:
 
         return None
 
+    # TODO: implement these (if possible?)
     def get_led_state(self):
         return "OFF"
 
-# Get information about the list of slots as well
-# as the slot configurations from JSON config
-class SlotMapDataSource:
-    ENCLOSURE_PATH = "/sys/class/enclosure"
-    COMPONENT_FILE = "components"
+    def get_drive_serial_number(self):
+        return "01234567"
+
+    def get_drive_device_path(self):
+        return "/dev/sda"
+
+    def is_in_zfs_pool(self):
+        return False
+
+    def get_zfs_pool_membership(self):
+        return "tank"
+
+    def debug(self, prefix = ""):
+        print("{}{}".format(prefix, os.path.basename(self.slot_path)))
+        print("{}\tHas Drive: {}".format(prefix, self.has_drive()))
+        print("{}\tPower Status: {}".format(prefix, self.get_power_status()))
+        print("{}\tLED State: {}".format(prefix, self.get_led_state()))
+        print("{}\tDrive Model: {}".format(prefix, self.get_drive_model()))
+        print("{}\tDrive Serial Number: {}".format(prefix, self.get_drive_serial_number()))
+        print("{}\tDrive Device: {}".format(prefix, self.get_drive_device_path()))
+        print("{}\tIs In ZFS Pool: {}".format(prefix, self.is_in_zfs_pool()))
+        print("{}\tZFS Pool Membership: {}".format(prefix, self.get_zfs_pool_membership()))
+
+
+class Enclosure:
     ID_FILE = "id"
+    COMPONENT_FILE = "components"
 
-    CONFIG_DIR = "~/.config/server-dash"
-    CONFIG_FILE = "enclosures.json"
+    # TODO: add getters / setters
+    def __init__(self, path):
+        self.full_path = "" # The path on the filesystem to the enclosure folder. Generally /sys/class/enclosure/XXXXXXXX
+        self.dims = (0, 0)
+        self.id = "" # A unique ID used to track this enclosure through reboots
+        self.name = "" # The friendly-name of the enclosure
+        self.slots = 0 # The number of slots in the enclosure
+        self.dims = (0, 0) # The rows, cols in this enclosure. rows * cols must equal slots
 
-    def guess_dims(self, slots, hint_width, hint_height):
+        # Verify if this is a sane enclosure path
+        path = get_norm_path(path)
+        if not os.path.isdir(path):
+            raise RuntimeError("Enclosure path '{}' is not a directory".format(path))
+
+        self.full_path = path
+
+        # Initialize name to the folder of this enclosure
+        self.name = os.path.basename(self.full_path)
+
+        # We expect the enclosure folder to contain a file called "components". This tells us how many slots 
+        # are in this enclosure
+        with open(os.path.join(self.full_path, self.COMPONENT_FILE)) as comp_file:
+            components = comp_file.read()
+            num_components = int(components.strip())
+            self.slots = num_components
+            self.dims = self.guess_dims(num_components)
+
+        with open(os.path.join(self.full_path, self.ID_FILE)) as id_file:
+            id = id_file.read()
+            id = id.strip()
+            self.id = id
+
+        # Load slots within this enclosure
+        slot_folders = [x for x in os.listdir(self.full_path) if os.path.isdir(os.path.join(self.full_path, x)) and "Slot" in x]
+        self.slot_data = {}
+        for s in slot_folders:
+            slot_data = Slot(os.path.join(self.full_path, s))
+            self.slot_data[s] = slot_data
+
+    def guess_dims(self, slots, hint_width = None, hint_height = None):
         # If we got a hint_width, try to guess the number of rows
         if hint_width is not None:
             if slots % hint_width == 0:
@@ -90,11 +149,55 @@ class SlotMapDataSource:
         # If we got neither, just return (slots, 1)
         return (slots, 1)
 
+    # Return a Dict representing this enclosure, can be used to generate a JSON
+    # for storage in a config file
+    def to_dict(self):
+        json_object = {}
+        json_object['name'] = self.name
+        json_object['id'] = self.id
+        json_object['height'] = self.dims[0]
+        json_object['width'] = self.dims[1]
+        json_object['slots'] = self.slots
+
+        return json_object
+
+    # Initialize enclosure using already-decoded JSON object data.
+    # We expect pre-decoded JSON data since this is normally stored as a list of Enclosures in the config file
+    def from_dict(self, json_object : Dict):
+        # Sanity check... does the number of slots match ours?
+        if json_object['slots'] != self.slots:
+            raise RuntimeError("Tried to load config for enclosure {}. Config specifies {} slots, but filesystem scan detected {} slots.".format(self.name, json_object['slots'], self.slots))
+
+        # Sanity check... does width * height == slots?
+        if (json_object['width'] * json_object['height']) != json_object['slots']:
+            raise RuntimeError("Tried to load config for enclosure {}. Config specifies dimensions {}x{}, but this does not equal {} slots", self.name, json_object['width'], json_object['height'], json_object['slots'])
+
+        # Seems to be a match: apply JSON config to the data source
+        self.name = json_object['name']
+        self.dims = (json_object['height'], json_object['width'])
+
+        # TODO: load individual slot configuration
+
+    def debug(self, prefix = ""):
+        print("{}Enclosure: {}".format(prefix, self.name))
+        print("{}\tFull Path: {}".format(prefix, self.full_path))
+        print("{}\tSlots: {}".format(prefix, self.slots))
+        print("{}\tDims: {}x{}".format(prefix, self.dims[0], self.dims[1]))
+        print("{}\tID: {}".format(prefix, self.id))
+
+        for slot in self.slot_data:
+            self.slot_data[slot].debug("{}\t".format(prefix))
+
+# Get information about the list of slots as well
+# as the slot configurations from JSON config
+class SlotMapDataSource:
+    ENCLOSURE_PATH = "/sys/class/enclosure"
+
+    CONFIG_DIR = "~/.config/server-dash"
+    CONFIG_FILE = "enclosures.json"
+
     def __init__(self, hint_width=None, hint_height=None):
         # Start detecting enclosures
-        if not os.path.exists(self.ENCLOSURE_PATH):
-            raise RuntimeError("The path '{}' does not exist: do you have enclosures?".format(self.ENCLOSURE_PATH))
-
         if not os.path.isdir(self.ENCLOSURE_PATH):
             raise RuntimeError("The path '{}' is not a directory: do you have enclosures?".format(self.ENCLOSURE_PATH))
 
@@ -105,36 +208,8 @@ class SlotMapDataSource:
 
         for enc in self.enclosures:
             self.enclosure_data[enc] = {}
-            self.enclosure_data[enc]['full_path'] = os.path.join(self.ENCLOSURE_PATH, enc)
-            self.enclosure_data[enc]['name'] = enc
-
-            # Start with empty dimensions
-            self.enclosure_data[enc]['slots'] = -1
-            self.enclosure_data[enc]['dims'] = ()
-
-            with open(os.path.join(self.enclosure_data[enc]['full_path'], self.COMPONENT_FILE)) as comp_file:
-                components = comp_file.read()
-                num_components = int(components.strip())
-                self.enclosure_data[enc]['slots'] = num_components
-                self.enclosure_data[enc]['dims'] = self.guess_dims(num_components, hint_width=hint_width, hint_height=hint_height)
-
-            # Start with ID == enclosure folder
-            self.enclosure_data[enc]['id'] = enc
-            with open(os.path.join(self.enclosure_data[enc]['full_path'], self.ID_FILE)) as id_file:
-                id = id_file.read()
-                id = id.strip()
-                self.enclosure_data[enc]['id'] = id
-
-            # Load slots within this enclosure
-            slot_folders = [x for x in os.listdir(self.enclosure_data[enc]['full_path']) if os.path.isdir(os.path.join(self.enclosure_data[enc]['full_path'], x)) and "Slot" in x]
-            self.enclosure_data[enc]['slot_data'] = {}
-            for s in slot_folders:
-                slot_data = Slot(os.path.join(self.enclosure_data[enc]['full_path'], s))
-                print(slot_data.get_power_status())
-                print(slot_data.has_drive())
-                print(slot_data.get_drive_model())
-                self.enclosure_data[enc]['slot_data'][s] = slot_data
-
+            enclosure_path = os.path.join(self.ENCLOSURE_PATH, enc)
+            self.enclosure_data[enc] = Enclosure(enclosure_path)
     
     # Get a list of "panels", which represents a planar grid of drives,
     # that can be enumerated by this data source
@@ -143,43 +218,40 @@ class SlotMapDataSource:
 
     # Get the dimensions in (rows, columns) for a specific panel
     def get_dims(self, enclosure):
-        return self.enclosure_data[enclosure]['dims']
+        return self.enclosure_data[enclosure].dims
 
     # Set the "friendly name" of an enclosure. Helpful for generating config
     def set_enclosure_name(self, enclosure, name):
-        self.enclosure_data[enclosure]['name'] = name
+        self.enclosure_data[enclosure].name = name
 
      # Get the "friendly name" of an enclosure, used for tab titles
     def get_enclosure_name(self, enclosure):
-        return self.enclosure_data[enclosure]['name']
+        return self.enclosure_data[enclosure].name
 
     def get_slot(self, enclosure, row, col):
         # TODO: need a better way to map slot co-ordinates to slot folder names
-        rows, cols = self.enclosure_data[enclosure]['dims']
+        rows, cols = self.enclosure_data[enclosure].dims
         slot_index = ((row * cols) + col) + 1
         slot_name = "Slot {0:02d}".format(slot_index)
-        return self.enclosure_data[enclosure]['slot_data'][slot_name]
+        return self.enclosure_data[enclosure].slot_data[slot_name]
 
     # Write config to the default location
-    def write_config(self):
-        norm_config_dir = get_norm_path(self.CONFIG_DIR)
+    def write_config(self, config_file = None):
+        if config_file is None:
+            norm_config_dir = get_norm_path(self.CONFIG_DIR)
+            config_file = os.path.join(norm_config_dir, self.CONFIG_FILE)
+        else:
+            config_file = get_norm_path(config_file)
+        
         # Ensure default location exists
         os.makedirs(norm_config_dir, exist_ok=True)
-        self.write_json(os.path.join(norm_config_dir, self.CONFIG_FILE))
+        self.write_json(config_file)
 
     # Write config data to a JSON file
     def write_json(self, json_file):
         json_config_data = []
         for enc in self.enclosure_data:
-            config_data = {}
-            config_data['name'] = self.enclosure_data[enc]['name']
-            config_data['id'] = self.enclosure_data[enc]['id']
-            rows, cols = self.enclosure_data[enc]['dims']
-            config_data['width'] = cols
-            config_data['height'] = rows
-            config_data['slots'] = self.enclosure_data[enc]['slots']
-
-            json_config_data.append(config_data)
+            json_config_data.append(self.enclosure_data[enc].to_dict())
 
         json_str = json.dumps(json_config_data)
         norm_path = get_norm_path(json_file)
@@ -189,9 +261,13 @@ class SlotMapDataSource:
             f.write(json_str)
 
     # Write config to the default location
-    def load_config(self):
-        norm_config_dir = get_norm_path(self.CONFIG_DIR)
-        config_file = os.path.join(norm_config_dir, self.CONFIG_FILE)
+    def load_config(self, config_file = None):
+        if config_file is None:
+            norm_config_dir = get_norm_path(self.CONFIG_DIR)
+            config_file = os.path.join(norm_config_dir, self.CONFIG_FILE)
+        else:
+            config_file = get_norm_path(config_file)
+        
         # Check if config exists
         if not os.path.exists(config_file):
             print("Cannot load config from {}, file does not exist".format(config_file))
@@ -205,7 +281,7 @@ class SlotMapDataSource:
     # an entry with an id that matches the provided id, then return the key
     def find_enclosure_by_id(self, id):
         for enc in self.enclosure_data:
-            if self.enclosure_data[enc]['id'] == id:
+            if self.enclosure_data[enc].id == id:
                 return enc
         return None
 
@@ -228,21 +304,8 @@ class SlotMapDataSource:
                 print("ERROR: Configuration entry '{}' does not match any discovered enclosures".format(enclosure_config))
                 continue
 
-            # Sanity check... does the number of slots match?
-            if enclosure_config['slots'] != self.enclosure_data[enc]['slots']:
-                print("ERROR: Configuration entry for enclosure {} specifies {} slots, but filesystem scan detected {} slots.".format(enc, enclosure_config['slots'], self.enclosure_data[enc]['slots']))
-                continue
-
-            # Sanity check... does width * height == slots?
-            if (enclosure_config['width'] * enclosure_config['height']) != enclosure_config['slots']:
-                print("ERROR: Configuration entry for enclosure {} specifies dimensions {}x{}, but this does not equal {} slots", enc, enclosure_config['width'], enclosure_config['height'], enclosure_config['slots'])
-                continue
-
-            # Seems to be a match: apply JSON config to the data source
-            self.enclosure_data[enc]['name'] = enclosure_config['name']
-            self.enclosure_data[enc]['dims'] = (enclosure_config['height'], enclosure_config['width'])
+            self.enclosure_data[enc].from_dict(enclosure_config)
 
     def debug(self):
         for enc in self.enclosure_data:
-            print("Found Enclosure: {}".format(enc))
-            print("Enclosure Data: {}".format(self.enclosure_data[enc]))
+            self.enclosure_data[enc].debug()
