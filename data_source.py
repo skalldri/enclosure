@@ -3,6 +3,7 @@ import os.path
 import json
 from typing import Dict
 from enum import Enum
+import math
 
 def get_norm_path(path):
     # Expand any environment variables
@@ -190,6 +191,31 @@ class Enclosure:
             slot_data = Slot(os.path.join(self.full_path, s))
             self.slot_data[s] = slot_data
 
+        # this dict maps the "physical" index to a "logical" index.
+        # a "physical" index is derived from a slot's physical location on the grid:
+        # a "physical" index == ((slot_row * enclosure_columns) + slot_col)
+        # a "logical" index is whatever index Linux decided to assign to each slot
+        # "logical" indexes always start at 1
+        # The default mapping just maps "physical index" -> "physical index" + 1
+        self.slot_mapping = {}
+        for i in range(self.slots):
+            self.slot_mapping[i] = self._get_logical_index(i+1)
+
+    def _get_slot_location(self, physical_index):
+        rows, cols = self.dims
+        row = math.floor(physical_index / cols)
+        col = (physical_index - (row * cols))
+        return (row, col)
+    
+    def _get_physical_index(self, row, col):
+        rows, cols = self.dims
+        physical_index = ((row * cols) + col)
+        return physical_index
+
+    # Return a string version of the slot logical index
+    def _get_logical_index(self, i):
+        return "Slot {0:02d}".format(i)
+
     def guess_dims(self, slots, hint_width = None, hint_height = None):
         # If we got a hint_width, try to guess the number of rows
         if hint_width is not None:
@@ -204,6 +230,14 @@ class Enclosure:
         # If we got neither, just return (slots, 1)
         return (slots, 1)
 
+    # returns a Slot object at the given row / column index
+    # if a slot-map is available from the configuration file, that is used.
+    # otherwise, the default mapping is a 1:1 mapping between row / column and slot folder name
+    def get_slot(self, row, col):
+        physical_index = self._get_physical_index(row, col)
+        slot_name = self.slot_mapping[physical_index]
+        return self.slot_data[slot_name]
+
     # Return a Dict representing this enclosure, can be used to generate a JSON
     # for storage in a config file
     def to_dict(self):
@@ -213,6 +247,7 @@ class Enclosure:
         json_object['height'] = self.dims[0]
         json_object['width'] = self.dims[1]
         json_object['slots'] = self.slots
+        json_object['slot_mapping'] = self.slot_mapping
 
         return json_object
 
@@ -231,7 +266,9 @@ class Enclosure:
         self.name = json_object['name']
         self.dims = (json_object['height'], json_object['width'])
 
-        # TODO: load individual slot configuration
+        for s in json_object['slot_mapping']:
+            s_int = int(s)
+            self.slot_mapping[s_int] = json_object['slot_mapping'][s]
 
     def debug(self, prefix = ""):
         print("{}Enclosure: {}".format(prefix, self.name))
@@ -240,8 +277,15 @@ class Enclosure:
         print("{}\tDims: {}x{}".format(prefix, self.dims[0], self.dims[1]))
         print("{}\tID: {}".format(prefix, self.id))
 
+        print("{}\tSlot Mapping:".format(prefix))
+        # slot_mapping keys are physical_indexes
+        for physical_index in self.slot_mapping:
+            loc = self._get_slot_location(physical_index)
+            print("{}\t\t({}, {}) -> {}".format(prefix, loc[0], loc[1], self.slot_mapping[physical_index]))
+
         for slot in self.slot_data:
             self.slot_data[slot].debug("{}\t".format(prefix))
+
 
 # Get information about the list of slots as well
 # as the slot configurations from JSON config
@@ -285,10 +329,12 @@ class SlotMapDataSource:
 
     def get_slot(self, enclosure, row, col):
         # TODO: need a better way to map slot co-ordinates to slot folder names
-        rows, cols = self.enclosure_data[enclosure].dims
-        slot_index = ((row * cols) + col) + 1
-        slot_name = "Slot {0:02d}".format(slot_index)
-        return self.enclosure_data[enclosure].slot_data[slot_name]
+        # rows, cols = self.enclosure_data[enclosure].dims
+        # slot_index = ((row * cols) + col) + 1
+        # slot_name = "Slot {0:02d}".format(slot_index)
+        # return self.enclosure_data[enclosure].slot_data[slot_name]
+        
+        return self.enclosure_data[enclosure].get_slot(row, col)
 
     # Write config to the default location
     def write_config(self, config_file = None):

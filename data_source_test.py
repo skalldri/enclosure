@@ -7,14 +7,15 @@ def SlotMapDataSourceTest():
     print(s.get_enclosures())
     s.debug()
 
-    #s.write_config()
     s.load_config("/home/salldritt/.config/server-dash/enclosures.json")
+    #s.write_config()
+    #s.load_config("/home/salldritt/.config/server-dash/enclosures.json")
 
     s.debug()
 
-    s.get_slot("6:0:15:0", 5, 1).set_led_state(LEDState.LOCATE)
+    #s.get_slot("6:0:15:0", 5, 1).set_led_state(LEDState.LOCATE)
     s.get_slot("6:0:15:0", 5, 1).debug()
-    s.get_slot("6:0:15:0", 5, 1).set_led_state(LEDState.OFF)
+    #s.get_slot("6:0:15:0", 5, 1).set_led_state(LEDState.OFF)
     s.get_slot("6:0:15:0", 5, 1).debug()
 
 def EnclosureTest():
