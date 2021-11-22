@@ -59,8 +59,14 @@ class SlotsMapPane(urwid.WidgetWrap):
             for c in range(cols):
                 # Create a button
                 slot_button = urwid.Button("[ {} -- {} ]".format(r, c), self.on_slot_press, (r, c))
-                # Wrap the button in an AttrMap so that when the button is focused it uses the 'reversed' Display Attribute
-                slot_button_wrapped = urwid.AttrMap(slot_button, None, focus_map='reversed')
+
+                if self.data_source.get_slot(enclosure, r, c).has_drive():
+                    # Wrap the button in an AttrMap so that when the button is focused it uses the 'reversed' Display Attribute
+                    slot_button_wrapped = urwid.AttrMap(slot_button, attr_map='slot_filled', focus_map='slot_filled_highlighted')
+                else:
+                    # Wrap the button in an AttrMap so that when the button is focused it uses the 'reversed' Display Attribute
+                    slot_button_wrapped = urwid.AttrMap(slot_button, attr_map='slot_empty', focus_map='slot_empty_highlighted')
+                
                 current_row_widgets.append((14, slot_button_wrapped))
                 
             

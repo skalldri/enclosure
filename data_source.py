@@ -235,6 +235,9 @@ class Enclosure:
     # otherwise, the default mapping is a 1:1 mapping between row / column and slot folder name
     def get_slot(self, row, col):
         physical_index = self._get_physical_index(row, col)
+        return self.get_slot_by_index(physical_index)
+
+    def get_slot_by_index(self, physical_index):
         slot_name = self.slot_mapping[physical_index]
         return self.slot_data[slot_name]
 
@@ -266,6 +269,8 @@ class Enclosure:
         self.name = json_object['name']
         self.dims = (json_object['height'], json_object['width'])
 
+        # When loading from JSON, ints are often represented as strings. convert first, 
+        # since we expect the slot_mapping to always be int-key'd
         for s in json_object['slot_mapping']:
             s_int = int(s)
             self.slot_mapping[s_int] = json_object['slot_mapping'][s]
@@ -319,6 +324,14 @@ class SlotMapDataSource:
     def get_dims(self, enclosure):
         return self.enclosure_data[enclosure].dims
 
+    # Get the dimensions in (rows, columns) for a specific panel
+    def set_dims(self, enclosure):
+        return self.enclosure_data[enclosure].dims
+
+    # Get the dimensions in (rows, columns) for a specific panel
+    def get_enclosure(self, enclosure):
+        return self.enclosure_data[enclosure]
+
     # Set the "friendly name" of an enclosure. Helpful for generating config
     def set_enclosure_name(self, enclosure, name):
         self.enclosure_data[enclosure].name = name
@@ -333,19 +346,18 @@ class SlotMapDataSource:
         # slot_index = ((row * cols) + col) + 1
         # slot_name = "Slot {0:02d}".format(slot_index)
         # return self.enclosure_data[enclosure].slot_data[slot_name]
-        
         return self.enclosure_data[enclosure].get_slot(row, col)
 
     # Write config to the default location
     def write_config(self, config_file = None):
         if config_file is None:
             norm_config_dir = get_norm_path(self.CONFIG_DIR)
+            # Ensure default location exists
+            os.makedirs(norm_config_dir, exist_ok=True)
             config_file = os.path.join(norm_config_dir, self.CONFIG_FILE)
         else:
             config_file = get_norm_path(config_file)
-        
-        # Ensure default location exists
-        os.makedirs(norm_config_dir, exist_ok=True)
+         
         self.write_json(config_file)
 
     # Write config data to a JSON file
